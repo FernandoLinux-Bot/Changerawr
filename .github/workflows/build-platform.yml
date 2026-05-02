@@ -1,0 +1,88 @@
+name: Build Platform Image
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+        description: 'Platform to build (linux/amd64 or linux/arm64)'
+      image_name:
+        required: true
+        type: string
+        description: 'Image name'
+      version:
+        required: true
+        type: string
+        description: 'Version label for the Docker image tag'
+      no_cache:
+        required: false
+        type: boolean
+        default: false
+        description: 'Disable Docker layer cache'
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      actions: write
+    steps:
+      - name: Checkout (HEAD of current branch)
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for ARM builds)
+        if: inputs.platform == 'linux/arm64'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set platform suffix
+        id: platform
+        run: |
+          PLATFORM_SUFFIX=$(echo "${{ inputs.platform }}" | sed 's|linux/||')
+          echo "suffix=$PLATFORM_SUFFIX" >> $GITHUB_OUTPUT
+
+      - name: Delete GHA Docker cache (force rebuild)
+        if: inputs.no_cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "🗑️ Deleting cached Docker layers for scope: ${{ steps.platform.outputs.suffix }}"
+          gh cache list --repo ${{ github.repository }} --json id,key \
+            | jq -r '.[] | select(.key | contains("${{ steps.platform.outputs.suffix }}")) | .id' \
+            | xargs -I{} gh cache delete {} --repo ${{ github.repository }} \
+            || echo "No cache entries found or deletion skipped"
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ inputs.platform }}
+          push: true
+          no-cache: ${{ inputs.no_cache }}
+          build-args: |
+            CACHEBUST=${{ inputs.no_cache && github.run_id || '1' }}
+          tags: ${{ env.REGISTRY }}/${{ inputs.image_name }}:${{ inputs.version }}-${{ steps.platform.outputs.suffix }}
+          cache-from: ${{ inputs.no_cache == false && format('type=gha,scope={0}', steps.platform.outputs.suffix) || '' }}
+          cache-to: ${{ inputs.no_cache == false && format('type=gha,mode=max,scope={0}', steps.platform.outputs.suffix) || '' }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version }}
+
+      - name: Build complete
+        run: |
+          echo "✅ Built ${{ inputs.platform }} image: ${{ env.REGISTRY }}/${{ inputs.image_name }}:${{ inputs.version }}-${{ steps.platform.outputs.suffix }}"

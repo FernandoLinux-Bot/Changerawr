@@ -1,0 +1,14 @@
+- [x] audit log doesn't populate all actions in filter
+- [x] audit log should load all chunked data in chunks but load all data
+- [x] fix links in AI assistant settings
+- [x] fix theme switcher handling
+- [x] allow for setting custom URLs for SSO Providers
+- [x] changelog analytics
+- [x] fix version compare issues ( better changelog editor UI by a little bit )
+- [x] allow for inviting team members in the setup wizard
+- [x] fix user deletion
+- [x] automatic updates if installed on Easypanel
+- [x] not all audit logs load from the database
+- [x] automatically configure OAuth2 for Easypanel installations
+- [x] If updating an OAuth2 ( SSO ) provider, you won't be able to log in with it anymore
+- [x] for whatever reason, the email you invite has to be lowercase. cool, check for that!

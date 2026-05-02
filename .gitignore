@@ -1,0 +1,82 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+.idea/dbnavigator.xml
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env
+.env*.local
+.api-keys-for-development.sensitive.donotcommitthisever.env.local
+
+# local backups
+*.backup
+temp_migration.sql
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# mistral experiments
+/app/api/experiments/mistral-ai/chat/route.ts
+/app/experiments/mistral-ai/page.tsx
+
+# widget build files
+/public/widgets
+
+/public/widget-announcement.js
+/public/widget-bundle.js
+/public/widget-classic.js
+/public/widget-floating.js
+/public/widget-modal.js
+# mapping files ( generated )
+/public/widget-announcement.js.map
+/public/widget-bundle.js.map
+/public/widget-classic.js.map
+/public/widget-floating.js.map
+/public/widget-modal.js.map
+
+# sensitive changerawr shenanigans
+.changerawr
+.changerawr/donotdeletethisfolder/donotdeletethisfile.chrcli.json
+nul
+null
+.chtsredevmscli
+.claude
+
+# sponsorer server
+/sponsor-server
+
+# user requests to add
+CLAUDE.md
