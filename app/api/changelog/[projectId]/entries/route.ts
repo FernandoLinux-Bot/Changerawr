@@ -3,6 +3,17 @@ import {db} from '@/lib/db'
 
 const ITEMS_PER_PAGE = 10
 
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Max-Age': '86400',
+}
+
+export async function OPTIONS() {
+    return new NextResponse(null, {status: 204, headers: CORS_HEADERS})
+}
+
 // Define type for search params
 type SortOrder = 'asc' | 'desc'
 
@@ -124,7 +135,7 @@ export async function GET(
             if (!project?.changelog) {
                 return NextResponse.json(
                     {error: 'Changelog not found or not public'},
-                    {status: 404}
+                    {status: 404, headers: CORS_HEADERS}
                 )
             }
 
@@ -229,12 +240,12 @@ export async function GET(
                 },
                 items: entries,
                 nextCursor
-            })
+            }, {headers: CORS_HEADERS})
         } catch (error) {
             console.error('Error fetching changelog entries:', error)
             return NextResponse.json(
                 {error: 'Failed to fetch changelog entries'},
-                {status: 500}
+                {status: 500, headers: CORS_HEADERS}
             )
         }
     })()
