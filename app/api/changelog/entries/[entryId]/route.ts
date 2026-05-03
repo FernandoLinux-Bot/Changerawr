@@ -11,6 +11,17 @@ import {z} from "zod";
 import {NextResponse} from 'next/server';
 import {useEntryViewTracking} from '@/app/changelog/[projectId]/changelog-view'
 
+const CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Max-Age': '86400',
+}
+
+export async function OPTIONS() {
+    return new NextResponse(null, {status: 204, headers: CORS_HEADERS})
+}
+
 // Helper to get project ID from changelog entry
 async function getProjectIdFromEntry(entryId: string) {
     const entry = await db.changelogEntry.findUnique({
@@ -107,7 +118,7 @@ export async function GET(
         if (!entry) {
             return NextResponse.json(
                 {error: 'Entry not found'},
-                {status: 404}
+                {status: 404, headers: CORS_HEADERS}
             );
         }
 
@@ -115,7 +126,7 @@ export async function GET(
         if (!entry.changelog.project.isPublic) {
             return NextResponse.json(
                 {error: 'Entry not found'},
-                {status: 404}
+                {status: 404, headers: CORS_HEADERS}
             );
         }
 
@@ -136,12 +147,12 @@ export async function GET(
                 changelogId: entry.changelogId,
                 tags: entry.tags,
             }
-        });
+        }, {headers: CORS_HEADERS});
     } catch (error) {
         console.error('Error fetching changelog entry:', error);
         return NextResponse.json(
             {error: 'Failed to fetch entry'},
-            {status: 500}
+            {status: 500, headers: CORS_HEADERS}
         );
     }
 }

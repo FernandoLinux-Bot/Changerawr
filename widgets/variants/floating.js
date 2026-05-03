@@ -3,6 +3,45 @@
  * A floating button with badge count that expands to show changelog entries
  */
 
+// Tiny, safe-ish Markdown → HTML renderer for the inline expanded view.
+// Escapes HTML first, then re-introduces the whitelisted markdown constructs.
+function renderMarkdown(src) {
+    if (!src) return '';
+
+    const escape = (s) => s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    let text = escape(String(src));
+
+    // Code blocks ```...```
+    text = text.replace(/```([\s\S]*?)```/g, (_, code) =>
+        `<pre style="background:#f4f4f5;padding:8px;border-radius:6px;overflow:auto;font-size:12px"><code>${code}</code></pre>`);
+
+    // Headings (#, ##, ###) at the start of a line
+    text = text.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;font-weight:600">$1</h4>');
+    text = text.replace(/^## (.+)$/gm, '<h3 style="margin:10px 0 4px;font-size:14px;font-weight:600">$1</h3>');
+    text = text.replace(/^# (.+)$/gm, '<h2 style="margin:12px 0 6px;font-size:15px;font-weight:600">$1</h2>');
+
+    // Bold, italic, inline code
+    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
+    text = text.replace(/`([^`]+)`/g, '<code style="background:#f4f4f5;padding:1px 4px;border-radius:3px;font-size:0.92em">$1</code>');
+
+    // Links [text](url)
+    text = text.replace(
+        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener" style="color:var(--changerawr-primary-color,#0066ff)">$1</a>'
+    );
+
+    // Unordered list items (- or *)
+    text = text.replace(/^[*-] (.+)$/gm, '<li style="margin-left:18px">$1</li>');
+    text = text.replace(/(<li[\s\S]+?<\/li>)(?!\s*<li)/g, '<ul style="margin:4px 0;padding-left:0">$1</ul>');
+
+    return text;
+}
+
 class ChangelogFloatingWidget {
     constructor(container, options) {
         this.container = container;
@@ -374,8 +413,9 @@ class ChangelogFloatingWidget {
             entryEl.appendChild(titleEl);
 
             // Content
+            let contentEl = null;
             if (entry.excerpt) {
-                const contentEl = document.createElement('p');
+                contentEl = document.createElement('p');
                 contentEl.className = 'changerawr-floating-entry-content';
                 contentEl.textContent = entry.excerpt;
                 contentEl.style.margin = '0 0 8px 0';
@@ -390,31 +430,84 @@ class ChangelogFloatingWidget {
                 entryEl.appendChild(contentEl);
             }
 
-            // Read more link
-            const linkEl = document.createElement('a');
-            linkEl.className = 'changerawr-floating-read-more';
-            linkEl.href = `${this.baseUrl}/changelog/${this.options.projectId}/${entry.id}`;
-            linkEl.textContent = 'Read more →';
-            linkEl.target = '_blank';
-            linkEl.rel = 'noopener';
-            linkEl.style.display = 'inline-block';
-            linkEl.style.marginTop = '6px';
-            linkEl.style.fontSize = '12px';
-            linkEl.style.fontWeight = '500';
-            linkEl.style.color = 'var(--changerawr-primary-color, #0066ff)';
-            linkEl.style.textDecoration = 'none';
-            linkEl.style.cursor = 'pointer';
-            linkEl.style.padding = '4px 0';
+            // Expandable full-content container (hidden until "Read more" is clicked)
+            const fullContentEl = document.createElement('div');
+            fullContentEl.className = 'changerawr-floating-full-content';
+            fullContentEl.style.display = 'none';
+            fullContentEl.style.marginTop = '8px';
+            fullContentEl.style.fontSize = '13px';
+            fullContentEl.style.color = 'var(--changerawr-text-secondary, #444)';
+            fullContentEl.style.lineHeight = '1.6';
+            fullContentEl.style.whiteSpace = 'pre-wrap';
+            fullContentEl.style.wordBreak = 'break-word';
+            entryEl.appendChild(fullContentEl);
 
-            linkEl.addEventListener('mouseenter', () => {
-                linkEl.style.textDecoration = 'underline';
+            // Toggle button (replaces the old external link)
+            const toggleEl = document.createElement('button');
+            toggleEl.type = 'button';
+            toggleEl.className = 'changerawr-floating-read-more';
+            toggleEl.textContent = 'Read more →';
+            toggleEl.style.display = 'inline-block';
+            toggleEl.style.marginTop = '6px';
+            toggleEl.style.fontSize = '12px';
+            toggleEl.style.fontWeight = '500';
+            toggleEl.style.color = 'var(--changerawr-primary-color, #0066ff)';
+            toggleEl.style.background = 'none';
+            toggleEl.style.border = 'none';
+            toggleEl.style.padding = '4px 0';
+            toggleEl.style.cursor = 'pointer';
+            toggleEl.style.textDecoration = 'none';
+
+            toggleEl.addEventListener('mouseenter', () => {
+                toggleEl.style.textDecoration = 'underline';
+            });
+            toggleEl.addEventListener('mouseleave', () => {
+                toggleEl.style.textDecoration = 'none';
             });
 
-            linkEl.addEventListener('mouseleave', () => {
-                linkEl.style.textDecoration = 'none';
+            let expanded = false;
+            let loaded = false;
+            let loading = false;
+
+            toggleEl.addEventListener('click', async (e) => {
+                e.stopPropagation();
+
+                if (loading) return;
+
+                if (expanded) {
+                    fullContentEl.style.display = 'none';
+                    if (contentEl) contentEl.style.display = '';
+                    toggleEl.textContent = 'Read more →';
+                    expanded = false;
+                    return;
+                }
+
+                if (!loaded) {
+                    loading = true;
+                    toggleEl.textContent = 'Loading…';
+                    try {
+                        const res = await fetch(
+                            `${this.baseUrl}/api/changelog/entries/${entry.id}`
+                        );
+                        if (!res.ok) throw new Error('Failed to load');
+                        const data = await res.json();
+                        const html = renderMarkdown(data.entry.content || '');
+                        fullContentEl.innerHTML = html;
+                        loaded = true;
+                    } catch (err) {
+                        fullContentEl.textContent = 'Could not load this entry. Please try again.';
+                    } finally {
+                        loading = false;
+                    }
+                }
+
+                fullContentEl.style.display = 'block';
+                if (contentEl) contentEl.style.display = 'none';
+                toggleEl.textContent = 'Show less ↑';
+                expanded = true;
             });
 
-            entryEl.appendChild(linkEl);
+            entryEl.appendChild(toggleEl);
 
             // Hover effect
             entryEl.addEventListener('mouseenter', () => {
