@@ -3,8 +3,9 @@
  * A floating button with badge count that expands to show changelog entries
  */
 
-// Tiny, safe-ish Markdown → HTML renderer for the inline expanded view.
-// Escapes HTML first, then re-introduces the whitelisted markdown constructs.
+// Markdown → HTML renderer for the inline expanded view.
+// Block-level parser (line-by-line) plus inline transformations. Escapes HTML
+// first so user content cannot inject arbitrary tags.
 function renderMarkdown(src) {
     if (!src) return '';
 
@@ -13,33 +14,172 @@ function renderMarkdown(src) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 
-    let text = escape(String(src));
+    const renderInline = (s) => {
+        // Inline code first so its contents aren't touched by other rules
+        const codeStash = [];
+        s = s.replace(/`([^`]+)`/g, (_, code) => {
+            codeStash.push(code);
+            return `CODE${codeStash.length - 1}`;
+        });
 
-    // Code blocks ```...```
-    text = text.replace(/```([\s\S]*?)```/g, (_, code) =>
-        `<pre style="background:#f4f4f5;padding:8px;border-radius:6px;overflow:auto;font-size:12px"><code>${code}</code></pre>`);
+        // Images ![alt](url)
+        s = s.replace(
+            /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
+            '<img src="$2" alt="$1" style="max-width:100%;height:auto;border-radius:6px;margin:6px 0" />'
+        );
 
-    // Headings (#, ##, ###) at the start of a line
-    text = text.replace(/^### (.+)$/gm, '<h4 style="margin:8px 0 4px;font-size:13px;font-weight:600">$1</h4>');
-    text = text.replace(/^## (.+)$/gm, '<h3 style="margin:10px 0 4px;font-size:14px;font-weight:600">$1</h3>');
-    text = text.replace(/^# (.+)$/gm, '<h2 style="margin:12px 0 6px;font-size:15px;font-weight:600">$1</h2>');
+        // Links [text](url)
+        s = s.replace(
+            /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+            '<a href="$2" target="_blank" rel="noopener" style="color:var(--changerawr-primary-color,#0066ff)">$1</a>'
+        );
 
-    // Bold, italic, inline code
-    text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-    text = text.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>');
-    text = text.replace(/`([^`]+)`/g, '<code style="background:#f4f4f5;padding:1px 4px;border-radius:3px;font-size:0.92em">$1</code>');
+        // Bare URLs (autolink)
+        s = s.replace(
+            /(^|[\s(])(https?:\/\/[^\s)<]+)/g,
+            '$1<a href="$2" target="_blank" rel="noopener" style="color:var(--changerawr-primary-color,#0066ff)">$2</a>'
+        );
 
-    // Links [text](url)
-    text = text.replace(
-        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener" style="color:var(--changerawr-primary-color,#0066ff)">$1</a>'
-    );
+        // Bold and italic
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+        s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+        s = s.replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>');
 
-    // Unordered list items (- or *)
-    text = text.replace(/^[*-] (.+)$/gm, '<li style="margin-left:18px">$1</li>');
-    text = text.replace(/(<li[\s\S]+?<\/li>)(?!\s*<li)/g, '<ul style="margin:4px 0;padding-left:0">$1</ul>');
+        // Strikethrough
+        s = s.replace(/~~([^~]+)~~/g, '<s>$1</s>');
 
-    return text;
+        // Restore inline code
+        s = s.replace(/CODE(\d+)/g, (_, i) =>
+            `<code style="background:#f4f4f5;padding:1px 4px;border-radius:3px;font-size:0.92em">${codeStash[+i]}</code>`);
+
+        return s;
+    };
+
+    // Pull fenced code blocks out first, replace with placeholders.
+    const codeBlocks = [];
+    let text = String(src).replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+        codeBlocks.push({lang, code: escape(code.replace(/\n$/, ''))});
+        return `BLOCK${codeBlocks.length - 1}`;
+    });
+
+    text = escape(text);
+    // Un-escape the placeholder markers so they survive
+    text = text.replace(/BLOCK(\d+)/g, 'BLOCK$1');
+
+    const lines = text.split(/\r?\n/);
+    const out = [];
+    let i = 0;
+
+    const flushParagraph = (buf) => {
+        if (buf.length) {
+            out.push(`<p style="margin:6px 0">${renderInline(buf.join(' '))}</p>`);
+            buf.length = 0;
+        }
+    };
+
+    let para = [];
+
+    while (i < lines.length) {
+        const line = lines[i];
+        const trimmed = line.trim();
+
+        // Blank line: paragraph break
+        if (!trimmed) {
+            flushParagraph(para);
+            i++;
+            continue;
+        }
+
+        // Code block placeholder
+        const blockMatch = trimmed.match(/^BLOCK(\d+)$/);
+        if (blockMatch) {
+            flushParagraph(para);
+            const {code} = codeBlocks[+blockMatch[1]];
+            out.push(`<pre style="background:#f4f4f5;padding:8px;border-radius:6px;overflow:auto;font-size:12px;margin:8px 0"><code>${code}</code></pre>`);
+            i++;
+            continue;
+        }
+
+        // Headings
+        const heading = trimmed.match(/^(#{1,6})\s+(.+)$/);
+        if (heading) {
+            flushParagraph(para);
+            const level = Math.min(heading[1].length + 1, 6); // bump down 1 (h1 → h2)
+            const sizes = {2: 16, 3: 15, 4: 14, 5: 13, 6: 13};
+            out.push(`<h${level} style="margin:10px 0 4px;font-size:${sizes[level]}px;font-weight:600">${renderInline(heading[2])}</h${level}>`);
+            i++;
+            continue;
+        }
+
+        // Horizontal rule
+        if (/^(\*\s*\*\s*\*+|-\s*-\s*-+|_\s*_\s*_+)$/.test(trimmed)) {
+            flushParagraph(para);
+            out.push('<hr style="border:none;border-top:1px solid var(--changerawr-border-color,#eaeaea);margin:10px 0" />');
+            i++;
+            continue;
+        }
+
+        // Blockquote (consume consecutive > lines)
+        if (/^>\s?/.test(trimmed)) {
+            flushParagraph(para);
+            const quoteLines = [];
+            while (i < lines.length && /^>\s?/.test(lines[i].trim())) {
+                quoteLines.push(lines[i].trim().replace(/^>\s?/, ''));
+                i++;
+            }
+            out.push(`<blockquote style="border-left:3px solid var(--changerawr-primary-color,#0066ff);padding:4px 10px;margin:8px 0;color:var(--changerawr-text-secondary,#666);font-style:italic">${renderInline(quoteLines.join(' '))}</blockquote>`);
+            continue;
+        }
+
+        // Unordered list
+        if (/^[*\-+]\s+/.test(trimmed)) {
+            flushParagraph(para);
+            const items = [];
+            while (i < lines.length && /^[*\-+]\s+/.test(lines[i].trim())) {
+                items.push(lines[i].trim().replace(/^[*\-+]\s+/, ''));
+                i++;
+            }
+            out.push(`<ul style="margin:6px 0;padding-left:20px">${items.map(it => `<li style="margin:2px 0">${renderInline(it)}</li>`).join('')}</ul>`);
+            continue;
+        }
+
+        // Ordered list
+        if (/^\d+[.)]\s+/.test(trimmed)) {
+            flushParagraph(para);
+            const items = [];
+            while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
+                items.push(lines[i].trim().replace(/^\d+[.)]\s+/, ''));
+                i++;
+            }
+            out.push(`<ol style="margin:6px 0;padding-left:20px">${items.map(it => `<li style="margin:2px 0">${renderInline(it)}</li>`).join('')}</ol>`);
+            continue;
+        }
+
+        // Table — header row, separator, body rows
+        if (/^\|.+\|$/.test(trimmed) && i + 1 < lines.length && /^\|[\s:|-]+\|$/.test(lines[i + 1].trim())) {
+            flushParagraph(para);
+            const headerCells = trimmed.slice(1, -1).split('|').map(c => c.trim());
+            i += 2;
+            const rows = [];
+            while (i < lines.length && /^\|.+\|$/.test(lines[i].trim())) {
+                rows.push(lines[i].trim().slice(1, -1).split('|').map(c => c.trim()));
+                i++;
+            }
+            const thead = `<thead><tr>${headerCells.map(c => `<th style="padding:6px 8px;border-bottom:2px solid var(--changerawr-border-color,#eaeaea);text-align:left;font-weight:600">${renderInline(c)}</th>`).join('')}</tr></thead>`;
+            const tbody = `<tbody>${rows.map(r => `<tr>${r.map(c => `<td style="padding:6px 8px;border-bottom:1px solid var(--changerawr-border-color-light,#f5f5f5)">${renderInline(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+            out.push(`<table style="border-collapse:collapse;width:100%;margin:8px 0;font-size:12px">${thead}${tbody}</table>`);
+            continue;
+        }
+
+        // Default: accumulate into paragraph buffer
+        para.push(trimmed);
+        i++;
+    }
+
+    flushParagraph(para);
+
+    return out.join('');
 }
 
 class ChangelogFloatingWidget {
@@ -50,7 +190,7 @@ class ChangelogFloatingWidget {
             position: 'bottom-right',
             maxEntries: 5,
             customCSS: null,
-            buttonText: "What's New",
+            buttonText: "Novidades",
             showBadge: true,
             ...options
         };
@@ -111,7 +251,7 @@ class ChangelogFloatingWidget {
 
         this.container.classList.add(`changerawr-position-${this.options.position}`);
         this.container.setAttribute('role', 'region');
-        this.container.setAttribute('aria-label', 'Changelog updates');
+        this.container.setAttribute('aria-label', 'Atualizações do changelog');
 
         this.render();
         await this.loadEntries();
@@ -132,7 +272,7 @@ class ChangelogFloatingWidget {
         const button = document.createElement('button');
         button.className = 'changerawr-floating-button';
         button.type = 'button';
-        button.setAttribute('aria-label', 'Open changelog');
+        button.setAttribute('aria-label', 'Abrir changelog');
         button.setAttribute('aria-expanded', 'false');
         button.setAttribute('aria-haspopup', 'dialog');
 
@@ -172,7 +312,7 @@ class ChangelogFloatingWidget {
         const panel = document.createElement('div');
         panel.className = 'changerawr-floating-panel';
         panel.setAttribute('role', 'dialog');
-        panel.setAttribute('aria-label', 'Changelog entries');
+        panel.setAttribute('aria-label', 'Entradas do changelog');
         panel.setAttribute('aria-hidden', 'true');
         panel.style.display = 'none';
 
@@ -187,7 +327,7 @@ class ChangelogFloatingWidget {
 
         const title = document.createElement('h2');
         title.className = 'changerawr-floating-panel-title';
-        title.textContent = this.project?.name || 'Changelog';
+        title.textContent = this.project?.name || 'Novidades';
         title.style.margin = '0';
         title.style.fontSize = '16px';
         title.style.fontWeight = '600';
@@ -196,7 +336,7 @@ class ChangelogFloatingWidget {
         closeBtn.className = 'changerawr-floating-close-btn';
         closeBtn.type = 'button';
         closeBtn.innerHTML = '✕';
-        closeBtn.setAttribute('aria-label', 'Close changelog');
+        closeBtn.setAttribute('aria-label', 'Fechar changelog');
         closeBtn.style.background = 'none';
         closeBtn.style.border = 'none';
         closeBtn.style.padding = '4px';
@@ -351,7 +491,7 @@ class ChangelogFloatingWidget {
 
             const emptyMsg = document.createElement('div');
             emptyMsg.style.fontSize = '14px';
-            emptyMsg.textContent = 'No changelog entries yet';
+            emptyMsg.textContent = 'Nenhuma novidade por aqui ainda';
 
             empty.appendChild(emptyIcon);
             empty.appendChild(emptyMsg);
@@ -446,7 +586,7 @@ class ChangelogFloatingWidget {
             const toggleEl = document.createElement('button');
             toggleEl.type = 'button';
             toggleEl.className = 'changerawr-floating-read-more';
-            toggleEl.textContent = 'Read more →';
+            toggleEl.textContent = 'Ler mais →';
             toggleEl.style.display = 'inline-block';
             toggleEl.style.marginTop = '6px';
             toggleEl.style.fontSize = '12px';
@@ -477,14 +617,14 @@ class ChangelogFloatingWidget {
                 if (expanded) {
                     fullContentEl.style.display = 'none';
                     if (contentEl) contentEl.style.display = '';
-                    toggleEl.textContent = 'Read more →';
+                    toggleEl.textContent = 'Ler mais →';
                     expanded = false;
                     return;
                 }
 
                 if (!loaded) {
                     loading = true;
-                    toggleEl.textContent = 'Loading…';
+                    toggleEl.textContent = 'Carregando…';
                     try {
                         const res = await fetch(
                             `${this.baseUrl}/api/changelog/entries/${entry.id}`
@@ -495,7 +635,7 @@ class ChangelogFloatingWidget {
                         fullContentEl.innerHTML = html;
                         loaded = true;
                     } catch (err) {
-                        fullContentEl.textContent = 'Could not load this entry. Please try again.';
+                        fullContentEl.textContent = 'Não foi possível carregar esta entrada. Tente novamente.';
                     } finally {
                         loading = false;
                     }
@@ -503,7 +643,7 @@ class ChangelogFloatingWidget {
 
                 fullContentEl.style.display = 'block';
                 if (contentEl) contentEl.style.display = 'none';
-                toggleEl.textContent = 'Show less ↑';
+                toggleEl.textContent = 'Mostrar menos ↑';
                 expanded = true;
             });
 
