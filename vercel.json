@@ -3,7 +3,6 @@
   "framework": "nextjs",
   "installCommand": "npm install --legacy-peer-deps",
   "buildCommand": "prisma generate --schema=./prisma/schema && prisma migrate deploy --schema=./prisma/schema && next build && tsx scripts/widget/build.ts",
-  "regions": ["gru1"],
   "functions": {
     "app/api/**/route.ts": {
       "maxDuration": 60
