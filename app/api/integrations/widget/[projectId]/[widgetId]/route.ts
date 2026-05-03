@@ -95,17 +95,35 @@ export async function GET(
       const initWidget = () => {
           const container = document.createElement('div');
           container.id = 'changerawr-widget-' + Math.random().toString(36).substr(2, 9);
-          const isPopupWithTrigger = options.isPopup && options.trigger;
 
-          if (isPopupWithTrigger) {
-              const triggerButton = document.getElementById(options.trigger);
+          // The floating variant has its own button, so a host-provided trigger
+          // works without popup mode — just hide the floating button. For the
+          // other variants we keep the original popup-with-trigger behavior
+          // (hide the container, swap to popup styling).
+          const isFloating = options.variant === 'floating';
+          const hasTrigger = !!options.trigger;
+          const isPopupWithTrigger = options.isPopup && hasTrigger;
+          const isFloatingWithTrigger = isFloating && hasTrigger;
+
+          let triggerButton = null;
+          if (hasTrigger) {
+              triggerButton = document.getElementById(options.trigger);
               if (!triggerButton) {
-                  console.error('Changerawr: Trigger button not found');
+                  console.error('Changerawr: Trigger button not found: ' + options.trigger);
                   return;
               }
+              triggerButton.setAttribute('aria-haspopup', 'dialog');
+          }
+
+          if (isPopupWithTrigger) {
               container.style.display = 'none';
               document.body.appendChild(container);
-              triggerButton.setAttribute('aria-haspopup', 'dialog');
+          } else if (isFloatingWithTrigger) {
+              // Floating variant: append container so the panel renders, but
+              // tell the widget to hide its own button so only the host
+              // trigger is visible.
+              document.body.appendChild(container);
+              options.hideButton = true;
           } else {
               currentScript.parentNode.insertBefore(container, currentScript);
           }
@@ -118,14 +136,13 @@ export async function GET(
                   return;
               }
               const widget = window.ChangerawrWidget.init({ container, ...options });
-              if (isPopupWithTrigger) {
-                  const btn = document.getElementById(options.trigger);
-                  if (btn) {
-                      btn.addEventListener('click', () => {
-                          widget.toggle();
-                          btn.setAttribute('aria-expanded', widget.isOpen);
-                      });
-                  }
+              if (triggerButton && typeof widget.toggle === 'function') {
+                  widget.triggerElement = triggerButton;
+                  triggerButton.addEventListener('click', (e) => {
+                      e.preventDefault();
+                      widget.toggle();
+                      triggerButton.setAttribute('aria-expanded', String(widget.isOpen));
+                  });
               }
           };
           script.onerror = () => console.error('Changerawr: Failed to load widget');

@@ -192,6 +192,7 @@ class ChangelogFloatingWidget {
             customCSS: null,
             buttonText: "Novidades",
             showBadge: true,
+            hideButton: false,
             ...options
         };
 
@@ -395,6 +396,13 @@ class ChangelogFloatingWidget {
         // Add to container
         this.container.appendChild(buttonWrapper);
 
+        // When hideButton is set (typically because the host page provides its
+        // own trigger), keep the panel but hide the button. The panel still
+        // anchors itself to its configured position.
+        if (this.options.hideButton) {
+            button.style.display = 'none';
+        }
+
         // Store references
         this.button = button;
         this.panel = panel;
@@ -404,10 +412,12 @@ class ChangelogFloatingWidget {
     }
 
     attachEventListeners() {
-        this.button.addEventListener('click', (e) => {
-            e.preventDefault();
-            this.toggle();
-        });
+        if (!this.options.hideButton) {
+            this.button.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.toggle();
+            });
+        }
 
         this.closeBtn.addEventListener('click', (e) => {
             e.preventDefault();
@@ -422,11 +432,14 @@ class ChangelogFloatingWidget {
             }
         });
 
-        // Close when clicking outside
+        // Close when clicking outside (host trigger is excluded via the
+        // optional triggerElement reference set by the loader).
         document.addEventListener('click', (e) => {
-            if (this.isOpen && !this.button.contains(e.target) && !this.panel.contains(e.target)) {
-                this.close();
-            }
+            if (!this.isOpen) return;
+            if (this.button && this.button.contains(e.target)) return;
+            if (this.panel.contains(e.target)) return;
+            if (this.triggerElement && this.triggerElement.contains(e.target)) return;
+            this.close();
         });
     }
 
@@ -702,7 +715,10 @@ class ChangelogFloatingWidget {
         }, 300);
 
         this.button.setAttribute('aria-expanded', 'false');
-        this.button.focus();
+        if (!this.options.hideButton) this.button.focus();
+        else if (this.triggerElement && typeof this.triggerElement.focus === 'function') {
+            this.triggerElement.focus();
+        }
     }
 
     toggle() {
