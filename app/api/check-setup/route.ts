@@ -20,8 +20,16 @@ export async function GET(request: Request) {
         // Add cache headers to prevent frequent checks
         headers.set('Cache-Control', 'max-age=5');
 
-        // Check if any user exists
-        const userCount = await db.user.count();
+        // Check if any *non-system* user exists
+        const userCount = await db.user.count({
+            where: {
+                email: {
+                    not: {
+                        endsWith: '@changerawr.sys'
+                    }
+                }
+            }
+        });
 
         return NextResponse.json(
             { isComplete: userCount > 0 },
